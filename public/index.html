@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Monitor de Requests</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        background: #0b0c10;
+        color: #e6e6e6;
+      }
+      header {
+        position: sticky; top: 0; z-index: 1;
+        background: #111318;
+        border-bottom: 1px solid #222831;
+        padding: 12px 16px;
+        display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      }
+      header h1 { font-size: 16px; margin: 0 12px 0 0; font-weight: 600; }
+      .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .btn {
+        background: #1f2833; color: #e6e6e6; border: 1px solid #2b3642; border-radius: 6px;
+        padding: 6px 10px; cursor: pointer; font-weight: 600;
+      }
+      .btn:hover { background: #24303d; }
+      .field { display: inline-flex; align-items: center; gap: 6px; }
+      main { padding: 12px; }
+      .log-list { display: flex; flex-direction: column; gap: 10px; max-width: 1200px; margin: 0 auto; }
+      .card {
+        border: 1px solid #22303a; border-radius: 10px; overflow: hidden; background: #0e141a;
+      }
+      .row {
+        display: grid; grid-template-columns: 110px 90px 1fr 80px 90px; gap: 8px; align-items: center;
+        padding: 10px 12px; border-bottom: 1px solid #1a222b;
+      }
+      .row strong { font-weight: 700; }
+      .badge { padding: 2px 6px; border-radius: 999px; font-weight: 700; font-size: 12px; }
+      .GET { background: #123e12; color: #a8e6a8; }
+      .POST { background: #123e5a; color: #a8d8ff; }
+      .PUT { background: #5a3e12; color: #ffd7a8; }
+      .PATCH { background: #453a66; color: #d7ccff; }
+      .DELETE { background: #5a1212; color: #ffb3b3; }
+      .status-ok { color: #a8e6a8; }
+      .status-bad { color: #ffb3b3; }
+      details { background: #0c1116; }
+      details summary { cursor: pointer; padding: 10px 12px; user-select: none; }
+      pre { margin: 0; padding: 10px 12px; overflow: auto; background: #0a0f14; border-top: 1px solid #1a222b; }
+      /* Destaque para RESPONSE */
+      pre.res { border-left: 4px solid #3b82f6; background: #0a0f14; }
+      pre.res.ok { border-left-color: #2ea043; }
+      pre.res.bad { border-left-color: #f85149; }
+      .section-title { padding: 8px 12px; background: #0c1116; border-top: 1px solid #1a222b; color: #a0a8b0; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 12px; }
+      .muted { color: #a0a8b0; }
+      .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+      input[type="text"] { background: #0e141a; border: 1px solid #22303a; color: #e6e6e6; padding: 6px 10px; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Monitor de Requests</h1>
+      <div class="controls">
+        <div class="filters">
+          <input id="filterText" type="text" placeholder="Filtrar por caminho, método, status..." />
+        </div>
+        <label class="field"><input id="autoScroll" type="checkbox" checked /> Auto-scroll</label>
+        <button id="pauseBtn" class="btn" aria-pressed="false">Pausar</button>
+        <button id="clearBtn" class="btn">Limpar</button>
+        <div class="field">
+          <input id="cfgClientId" type="text" placeholder="client_id" />
+          <input id="cfgClientSecret" type="text" placeholder="client_secret" />
+          <button id="saveCfgBtn" class="btn">Salvar Config</button>
+        </div>
+      </div>
+      <div class="muted" id="stats"></div>
+    </header>
+    <main>
+      <div id="list" class="log-list"></div>
+    </main>
+
+    <script>
+      const listEl = document.getElementById('list');
+      const filterEl = document.getElementById('filterText');
+      const autoScrollEl = document.getElementById('autoScroll');
+      const pauseBtn = document.getElementById('pauseBtn');
+      const clearBtn = document.getElementById('clearBtn');
+      const statsEl = document.getElementById('stats');
+      const cfgClientIdEl = document.getElementById('cfgClientId');
+      const cfgClientSecretEl = document.getElementById('cfgClientSecret');
+      const saveCfgBtn = document.getElementById('saveCfgBtn');
+
+      let isPaused = false;
+      let totalCount = 0;
+
+      function formatJson(value) {
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch (e) {
+          return String(value);
+        }
+      }
+
+      function createRow(entry) {
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        const top = document.createElement('div');
+        top.className = 'row';
+
+        const time = new Date(entry.timestamp);
+        const timeEl = document.createElement('div');
+        timeEl.textContent = time.toLocaleTimeString();
+
+        const methodEl = document.createElement('div');
+        methodEl.innerHTML = `<span class="badge ${entry.request.method}">${entry.request.method}</span>`;
+
+        const pathEl = document.createElement('div');
+        pathEl.textContent = entry.request.path;
+
+        const statusEl = document.createElement('div');
+        const statusClass = entry.response.status < 400 ? 'status-ok' : 'status-bad';
+        statusEl.innerHTML = `<strong class="${statusClass}">${entry.response.status}</strong>`;
+
+        const durEl = document.createElement('div');
+        durEl.innerHTML = `${entry.durationMs} ms`;
+
+        top.append(timeEl, methodEl, pathEl, statusEl, durEl);
+
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = 'Detalhes';
+
+        const reqTitle = document.createElement('div');
+        reqTitle.className = 'section-title';
+        reqTitle.textContent = 'Request';
+
+        const reqPre = document.createElement('pre');
+        reqPre.className = 'req';
+        reqPre.innerHTML = `<code>${escapeHtml(formatJson({
+          headers: entry.request.headers,
+          query: entry.request.query,
+          body: entry.request.body
+        }))}</code>`;
+
+        const resTitle = document.createElement('div');
+        resTitle.className = 'section-title';
+        resTitle.textContent = 'Response';
+
+        const resPre = document.createElement('pre');
+        const isOk = entry.response.status < 400;
+        resPre.className = `res ${isOk ? 'ok' : 'bad'}`;
+        resPre.innerHTML = `<code>${escapeHtml(formatJson({
+          status: entry.response.status,
+          type: entry.response.type,
+          body: entry.response.body
+        }))}</code>`;
+
+        details.append(summary, reqTitle, reqPre, resTitle, resPre);
+        card.append(top, details);
+
+        // Para filtros rápidos
+        card.dataset.search = [
+          entry.request.method,
+          entry.request.path,
+          String(entry.response.status)
+        ].join(' ').toLowerCase();
+
+        return card;
+      }
+
+      function escapeHtml(str) {
+        return String(str)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;');
+      }
+
+      function applyFilter() {
+        const q = filterEl.value.trim().toLowerCase();
+        const items = listEl.children;
+        for (let i = 0; i < items.length; i++) {
+          const el = items[i];
+          el.style.display = !q || el.dataset.search.includes(q) ? '' : 'none';
+        }
+      }
+
+      filterEl.addEventListener('input', applyFilter);
+
+      pauseBtn.addEventListener('click', () => {
+        isPaused = !isPaused;
+        pauseBtn.textContent = isPaused ? 'Retomar' : 'Pausar';
+        pauseBtn.setAttribute('aria-pressed', String(isPaused));
+      });
+
+      clearBtn.addEventListener('click', () => {
+        listEl.innerHTML = '';
+        totalCount = 0;
+        updateStats();
+      });
+
+      function updateStats() {
+        statsEl.textContent = `${totalCount} eventos`;
+      }
+
+      const source = new EventSource('/events');
+      source.onmessage = (e) => {
+        if (!e.data) return;
+        try {
+          const entry = JSON.parse(e.data);
+          totalCount += 1;
+          if (!isPaused) {
+            const row = createRow(entry);
+            listEl.appendChild(row);
+            if (autoScrollEl.checked) {
+              row.scrollIntoView({ behavior: 'auto', block: 'end' });
+            }
+            applyFilter();
+          }
+          updateStats();
+        } catch (err) {
+          console.error('Erro ao processar evento', err);
+        }
+      };
+
+      source.onerror = () => {
+        // Apenas indicar no UI; EventSource tenta reconectar automaticamente
+        statsEl.textContent = `${totalCount} eventos • reconectando...`;
+      };
+
+      // Config UI
+      async function loadConfig() {
+        try {
+          const res = await fetch('/config');
+          if (!res.ok) return;
+          const data = await res.json();
+          cfgClientIdEl.value = data.client_id || '';
+          cfgClientSecretEl.value = data.client_secret || '';
+        } catch {}
+      }
+      loadConfig();
+
+      saveCfgBtn.addEventListener('click', async () => {
+        try {
+          const res = await fetch('/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              client_id: cfgClientIdEl.value,
+              client_secret: cfgClientSecretEl.value,
+            }),
+          });
+          if (!res.ok) {
+            alert('Falha ao salvar configuração');
+            return;
+          }
+        } catch (e) {
+          alert('Erro ao salvar configuração');
+        }
+      });
+    </script>
+  </body>
+  </html>
+
+
