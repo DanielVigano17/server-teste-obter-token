@@ -196,7 +196,10 @@
         pauseBtn.setAttribute('aria-pressed', String(isPaused));
       });
 
-      clearBtn.addEventListener('click', () => {
+      clearBtn.addEventListener('click', async () => {
+        try {
+          await fetch('/logs/clear', { method: 'POST' });
+        } catch {}
         listEl.innerHTML = '';
         totalCount = 0;
         updateStats();

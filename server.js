@@ -32,7 +32,8 @@ function sanitizeRequest(req) {
 // Middleware para capturar requests e responses
 app.use((req, res, next) => {
   const startMs = Date.now();
-  const shouldLog = !String(req.path || '').startsWith('/config');
+  const pathStr = String(req.path || '');
+  const shouldLog = !(pathStr.startsWith('/config') || pathStr === '/logs/clear');
 
   const { headers: safeHeaders, body: safeBody } = sanitizeRequest(req);
   const requestInfo = {
@@ -107,6 +108,12 @@ app.get('/events', (req, res) => {
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Limpar logs no servidor
+app.post('/logs/clear', (req, res) => {
+  requestLogs.length = 0;
+  res.json({ ok: true });
 });
 
 // Endpoints de configuração
